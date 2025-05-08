@@ -1,15 +1,20 @@
 const xlsx = require("xlsx");
 const Provider = require("../models/Provider");
+const fs = require("fs").promises;
 
 // Create Provider
 const createProvider = async (req, res) => {
   try {
     const { name, address, lga } = req.body;
+    if (!name || !address || !lga) {
+      return res.status(400).json({ message: "Name, address, and LGA are required" });
+    }
     const newProvider = new Provider({ name, address, lga });
     await newProvider.save();
     res.status(201).json(newProvider);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Create provider error:", error);
+    res.status(500).json({ message: "Failed to create provider", error: error.message });
   }
 };
 
@@ -18,6 +23,9 @@ const updateProvider = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, address, lga } = req.body;
+    if (!name || !address || !lga) {
+      return res.status(400).json({ message: "Name, address, and LGA are required" });
+    }
     const updatedProvider = await Provider.findByIdAndUpdate(
       id,
       { name, address, lga },
@@ -28,7 +36,8 @@ const updateProvider = async (req, res) => {
     }
     res.json(updatedProvider);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Update provider error:", error);
+    res.status(500).json({ message: "Failed to update provider", error: error.message });
   }
 };
 
@@ -42,7 +51,8 @@ const deleteProvider = async (req, res) => {
     }
     res.json({ message: "Provider deleted successfully" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Delete provider error:", error);
+    res.status(500).json({ message: "Failed to delete provider", error: error.message });
   }
 };
 
@@ -52,7 +62,8 @@ const getAllProviders = async (req, res) => {
     const providers = await Provider.find();
     res.json(providers);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Get all providers error:", error);
+    res.status(500).json({ message: "Failed to fetch providers", error: error.message });
   }
 };
 
@@ -65,29 +76,47 @@ const getProviderById = async (req, res) => {
     }
     res.json(provider);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Get provider by ID error:", error);
+    res.status(500).json({ message: "Failed to fetch provider", error: error.message });
   }
 };
 
+// Bulk Upload Providers
 const bulkUploadProviders = async (req, res) => {
-    try {
-      const workbook = xlsx.readFile(req.file.path);
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const data = xlsx.utils.sheet_to_json(sheet);
-  
-      const formatted = data.map((row) => ({
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+    const workbook = xlsx.readFile(req.file.path);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const data = xlsx.utils.sheet_to_json(sheet);
+
+    if (!data.length) {
+      await fs.unlink(req.file.path);
+      return res.status(400).json({ message: "Excel file is empty" });
+    }
+
+    const formatted = data.map((row) => {
+      const provider = {
         name: row.name || row.Name,
         address: row.address || row.Address,
         lga: row.lga || row.LGA,
-      }));
-  
-      const saved = await Provider.insertMany(formatted);
-      res.status(201).json({ message: "Providers uploaded successfully", saved });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  };
-  
+      };
+      if (!provider.name || !provider.address || !provider.lga) {
+        throw new Error(`Invalid row: ${JSON.stringify(row)}`);
+      }
+      return provider;
+    });
+
+    const saved = await Provider.insertMany(formatted);
+    await fs.unlink(req.file.path); // Clean up uploaded file
+    res.status(201).json({ message: "Providers uploaded successfully", count: saved.length });
+  } catch (error) {
+    console.error("Bulk upload error:", error);
+    if (req.file) await fs.unlink(req.file.path).catch(() => {});
+    res.status(500).json({ message: "Failed to upload providers", error: error.message });
+  }
+};
 
 module.exports = {
   createProvider,
@@ -95,5 +124,5 @@ module.exports = {
   deleteProvider,
   getAllProviders,
   getProviderById,
-  bulkUploadProviders
+  bulkUploadProviders,
 };
